@@ -79,41 +79,28 @@ no la reserva de memoria ni `add_drop`. Por eso **13.29 s** es la referencia par
 calcular los speedups.
 
 ## 2. Diagrama de flujo
+   ![Diagrama de flujo del programa base en CPU](docs/diagrama.png)
+   
 
 ## 3. Explicación de cada función
 
 El código fuente comentado está en [`src/main.cpp`](src/main.cpp).
 
-**`Config`.** Estructura que junta todos los parámetros: tamaño de la malla, duración
-y fps, las constantes de la física, el tamaño de la gota y la ruta del video. Se crea
-una sola vez en `main` como `const` y las demás funciones la reciben, así no hay
-números escritos a mano en el código.
 
-**`index_of`.** Convierte una posición `(x, y)` en el índice del vector. La malla está
-guardada por filas, por lo que las celdas de una misma fila quedan seguidas en memoria.
 
-**`add_drop`.** Crea la perturbación inicial. Suma una gaussiana en el centro a
-`current` y le resta una parte a `previous`; como la velocidad es `current − previous`,
-la gota arranca con velocidad y no solo con altura. Se ejecuta una vez antes del ciclo.
+**`Config`**: es una estructura donde están todos los parámetros juntos (tamaño de la malla, duración, fps, las constantes de la física, el tamaño de la gota y el nombre del video). Se crea una vez en `main` y las demás funciones la reciben, así si queremos cambiar algo lo hacemos en un solo lugar.
 
-**`border_absorption`.** Devuelve el amortiguamiento de cada celda según su distancia
-al borde. En el centro es el valor base, y en los 32 px cercanos al borde crece de
-forma cuadrática hasta `damping + edge_damping`. Es una capa absorbente: la onda se
-apaga antes de llegar al marco y no rebota.
+**`index_of`**: pasa una posición `(x, y)` al índice del vector, porque la malla se guarda como un solo arreglo, fila por fila.
 
-**`simulate_step`.** Hace avanzar la simulación un paso. Con `previous` y `current`
-calcula `next`, usando el laplaciano de 5 puntos y restando el amortiguamiento por la
-velocidad. Cada celda depende solo de valores del paso anterior, por lo que todas se
-pueden calcular a la vez. El borde de la malla queda en 0.
+**`add_drop`**: pone la gota al inicio, le suma una campana (gaussiana) al centro de `current` y le resta una parte a `previous`. como la velocidad sale de `current − previous`, la gota empieza con velocidad y por eso la onda sale hacia afuera. Solo se corre una vez, antes del ciclo.
 
-**`render_frame`.** Convierte la malla de alturas en la imagen de un cuadro. Por cada
-píxel calcula la pendiente de la superficie con los vecinos, de ahí una normal, y con
-ella la luz difusa y un brillo especular en las crestas. Eso se combina con la altura
-para obtener el gris. Cada píxel es independiente de los demás.
+**`border_absorption`**: dice cuánto amortiguamiento le toca a cada celda según qué tan cerca está del borde. En el centro es el valor base, y en los 32 píxeles del borde aumenta poco a poco, así las olas se van apagando antes de llegar al marco y no rebotan.
 
-**`main`.** Reserva las tres mallas, pone la gota, abre el video y ejecuta el ciclo:
-por cada cuadro avanza la simulación, renderiza y escribe al video. Al terminar
-calcula el tiempo y los pasos por segundo.
+**`simulate_step`**: avanza la simulación un paso, para cada celda toma sus 4 vecinas, calcula el laplaciano y con eso saca el valor nuevo en `next`, restando el amortiguamiento por la velocidad. Cada celda solo lee valores del paso anterior, entonces todas se pueden calcular al mismo tiempo (esto es lo que nos sirve para GPU), el borde queda en 0.
+
+**`render_frame`**: convierte las alturas en una imagen, para cada píxel mira los vecinos para ver qué tan inclinada está la superficie, de ahí saca la luz que recibe y un brillo en las crestas, y lo mezcla con la altura para decidir el gris. También escribe el número de cuadro encima. Cada píxel es independiente de los demás.
+
+**`main`**: reserva las tres mallas (`previous`, `current` y `next`), pone la gota, abre el video y corre el ciclo. En cada cuadro hace la simulación, dibuja y escribe el cuadro al video. Al final calcula el tiempo y los pasos por segundo.
 
 ## 4. Resultados del perfilado CPU
 
