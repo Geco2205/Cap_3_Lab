@@ -1,24 +1,14 @@
-// drop-simulation | versión CPU base 
-// EL5859 Computación Heterogénea, Laboratorio 5, Ejercicio B
-//
-// El programa simula una gota que cae en un estanque. Lo que se resuelve es una
-// ecuación de onda 2D con amortiguamiento sobre una malla de 640x640 alturas
-// (float). En cada paso se calcula cómo se mueve el agua, luego cada estado se
-// dibuja como una imagen en grises con iluminación para que parezca agua, y las
-// imágenes se van guardando en un video MP4. 
-
 #include <algorithm>
 #include <chrono>
 #include <cmath>
-#include <filesystem>
+#include <experimental/filesystem>
 #include <iostream>
-#include <stdexcept>
-#include <string>
-#include <vector>
-
 #include <opencv2/core.hpp>
 #include <opencv2/imgproc.hpp>
 #include <opencv2/videoio.hpp>
+#include <stdexcept>
+#include <string>
+#include <vector>
 
 namespace {
 
@@ -57,7 +47,8 @@ int index_of(int x, int y, int width) {
 // calcula como current - previous, la gota no empieza quieta sino con velocidad,
 // y eso hace que la onda salga hacia afuera. Se ejecuta una sola vez, antes del
 // ciclo principal, y no toca las celdas del borde de la malla.
-void add_drop(std::vector<float>& current, std::vector<float>& previous, const Config& cfg) {
+void add_drop(std::vector<float>& current, std::vector<float>& previous,
+              const Config& cfg) {
     const float cx = 0.5f * static_cast<float>(cfg.width - 1);
     const float cy = 0.5f * static_cast<float>(cfg.height - 1);
     const float sigma2 = cfg.drop_radius * cfg.drop_radius;
@@ -67,7 +58,8 @@ void add_drop(std::vector<float>& current, std::vector<float>& previous, const C
             const float dx = static_cast<float>(x) - cx;
             const float dy = static_cast<float>(y) - cy;
             const float r2 = dx * dx + dy * dy;
-            const float pulse = cfg.drop_strength * std::exp(-r2 / (2.0f * sigma2));
+            const float pulse =
+                cfg.drop_strength * std::exp(-r2 / (2.0f * sigma2));
             const int idx = index_of(x, y, cfg.width);
             current[idx] += pulse;
             previous[idx] -= 0.35f * pulse;
@@ -106,8 +98,7 @@ float border_absorption(int x, int y, const Config& cfg) {
 // celda. El borde queda siempre en 0 porque next se llena de ceros antes y el
 // ciclo no lo toca.
 void simulate_step(const std::vector<float>& previous,
-                   const std::vector<float>& current,
-                   std::vector<float>& next,
+                   const std::vector<float>& current, std::vector<float>& next,
                    const Config& cfg) {
     const float c2 = cfg.wave_speed * cfg.wave_speed;
 
@@ -117,14 +108,12 @@ void simulate_step(const std::vector<float>& previous,
         for (int x = 1; x < cfg.width - 1; ++x) {
             const int idx = index_of(x, y, cfg.width);
             const float laplacian =
-                current[idx - 1] + current[idx + 1] +
-                current[idx - cfg.width] + current[idx + cfg.width] -
-                4.0f * current[idx];
+                current[idx - 1] + current[idx + 1] + current[idx - cfg.width] +
+                current[idx + cfg.width] - 4.0f * current[idx];
             const float velocity = current[idx] - previous[idx];
             const float local_damping = border_absorption(x, y, cfg);
 
-            next[idx] = 2.0f * current[idx] - previous[idx] +
-                        c2 * laplacian -
+            next[idx] = 2.0f * current[idx] - previous[idx] + c2 * laplacian -
                         local_damping * velocity;
         }
     }
@@ -139,45 +128,44 @@ void simulate_step(const std::vector<float>& previous,
 // Al final escribe encima el número de cuadro. Cada píxel se calcula sin
 // depender de los demás, así que también se puede paralelizar. Además hace una
 // normalización y un pow por píxel, entonces probablemente pese bastante.
-cv::Mat render_frame(const std::vector<float>& height, const Config& cfg, int frame_number) {
+cv::Mat render_frame(const std::vector<float>& height, const Config& cfg,
+                     int frame_number) {
     cv::Mat image(cfg.height, cfg.width, CV_8UC3);
 
     const cv::Vec3f light_dir = cv::normalize(cv::Vec3f(-0.35f, -0.55f, 0.76f));
 
     for (int y = 0; y < cfg.height; ++y) {
         for (int x = 0; x < cfg.width; ++x) {
-            // en los bordes se repite el vecino para no salirse de la malla
             const int xm = std::max(0, x - 1);
             const int xp = std::min(cfg.width - 1, x + 1);
             const int ym = std::max(0, y - 1);
             const int yp = std::min(cfg.height - 1, y + 1);
 
-            const float dx = height[index_of(xm, y, cfg.width)] - height[index_of(xp, y, cfg.width)];
-            const float dy = height[index_of(x, ym, cfg.width)] - height[index_of(x, yp, cfg.width)];
-            const cv::Vec3f normal = cv::normalize(cv::Vec3f(2.8f * dx, 2.8f * dy, 1.0f));
+            const float dx = height[index_of(xm, y, cfg.width)] -
+                             height[index_of(xp, y, cfg.width)];
+            const float dy = height[index_of(x, ym, cfg.width)] -
+                             height[index_of(x, yp, cfg.width)];
+            const cv::Vec3f normal =
+                cv::normalize(cv::Vec3f(2.8f * dx, 2.8f * dy, 1.0f));
 
             const float diffuse = std::max(0.0f, normal.dot(light_dir));
-            const float wave = std::clamp(0.5f + 1.8f * height[index_of(x, y, cfg.width)], 0.0f, 1.0f);
+            const float wave = std::clamp(
+                0.5f + 1.8f * height[index_of(x, y, cfg.width)], 0.0f, 1.0f);
             const float specular = std::pow(std::max(0.0f, diffuse), 24.0f);
 
             float intensity = 35.0f + 120.0f * wave;
             intensity *= 0.60f + 0.65f * diffuse;
             intensity += 130.0f * specular;
 
-            const auto gray = static_cast<unsigned char>(std::clamp(intensity, 0.0f, 255.0f));
+            const auto gray =
+                static_cast<unsigned char>(std::clamp(intensity, 0.0f, 255.0f));
             image.at<cv::Vec3b>(y, x) = cv::Vec3b(gray, gray, gray);
         }
     }
 
-    // el texto sirve para distinguir los videos de CPU y GPU al compararlos
-    cv::putText(image,
-                "CPU float32 | frame " + std::to_string(frame_number),
-                cv::Point(18, 32),
-                cv::FONT_HERSHEY_SIMPLEX,
-                0.65,
-                cv::Scalar(235, 235, 235),
-                1,
-                cv::LINE_AA);
+    cv::putText(image, "CPU float32 | frame " + std::to_string(frame_number),
+                cv::Point(18, 32), cv::FONT_HERSHEY_SIMPLEX, 0.65,
+                cv::Scalar(235, 235, 235), 1, cv::LINE_AA);
 
     return image;
 }
@@ -197,12 +185,15 @@ cv::Mat render_frame(const std::vector<float>& height, const Config& cfg, int fr
 int main() {
     try {
         const Config cfg;
-        const int total_frames = static_cast<int>(std::round(cfg.seconds * cfg.fps));
-        const std::size_t cells = static_cast<std::size_t>(cfg.width) * static_cast<std::size_t>(cfg.height);
+        const int total_frames =
+            static_cast<int>(std::round(cfg.seconds * cfg.fps));
+        const std::size_t cells = static_cast<std::size_t>(cfg.width) *
+                                  static_cast<std::size_t>(cfg.height);
 
-        std::filesystem::path output_path(cfg.output);
+        std::experimental::filesystem::path output_path(cfg.output);
         if (output_path.has_parent_path()) {
-            std::filesystem::create_directories(output_path.parent_path());
+            std::experimental::filesystem::create_directories(
+                output_path.parent_path());
         }
 
         std::vector<float> previous(cells, 0.0f);
@@ -212,26 +203,48 @@ int main() {
         add_drop(current, previous, cfg);
 
         cv::VideoWriter writer(
-            cfg.output,
-            cv::VideoWriter::fourcc('m', 'p', '4', 'v'),
-            static_cast<double>(cfg.fps),
-            cv::Size(cfg.width, cfg.height));
+            cfg.output, cv::VideoWriter::fourcc('m', 'p', '4', 'v'),
+            static_cast<double>(cfg.fps), cv::Size(cfg.width, cfg.height));
 
         if (!writer.isOpened()) {
-            throw std::runtime_error("No se pudo abrir el archivo de salida: " + cfg.output);
+            throw std::runtime_error("No se pudo abrir el archivo de salida: " +
+                                     cfg.output);
         }
 
         const auto start = std::chrono::steady_clock::now();
+        double time_simulation = 0.0;
+        double time_render = 0.0;
+        double time_video = 0.0;
 
         for (int frame = 0; frame < total_frames; ++frame) {
             for (int step = 0; step < cfg.steps_per_frame; ++step) {
+                const auto t0 = std::chrono::steady_clock::now();
+
                 simulate_step(previous, current, next, cfg);
-                // los swap rotan los buffers sin copiar datos
+
+                const auto t1 = std::chrono::steady_clock::now();
+                time_simulation +=
+                    std::chrono::duration<double>(t1 - t0).count();
+
                 previous.swap(current);
                 current.swap(next);
             }
 
-            writer.write(render_frame(current, cfg, frame));
+            const auto t2 = std::chrono::steady_clock::now();
+
+            cv::Mat image = render_frame(current, cfg, frame);
+
+            const auto t3 = std::chrono::steady_clock::now();
+
+            time_render += std::chrono::duration<double>(t3 - t2).count();
+
+            const auto t4 = std::chrono::steady_clock::now();
+
+            writer.write(image);
+
+            const auto t5 = std::chrono::steady_clock::now();
+
+            time_video += std::chrono::duration<double>(t5 - t4).count();
 
             if (frame % std::max(1, total_frames / 10) == 0) {
                 std::cout << "Frame " << frame << " / " << total_frames << '\n';
@@ -239,13 +252,27 @@ int main() {
         }
 
         const auto end = std::chrono::steady_clock::now();
-        const double elapsed = std::chrono::duration<double>(end - start).count();
-        const double simulated_steps = static_cast<double>(total_frames) * cfg.steps_per_frame;
+        const double elapsed =
+            std::chrono::duration<double>(end - start).count();
+        const double simulated_steps =
+            static_cast<double>(total_frames) * cfg.steps_per_frame;
 
         std::cout << "Video generado: " << cfg.output << '\n';
         std::cout << "Tiempo: " << elapsed << " s\n";
         std::cout << "Pasos simulados: " << simulated_steps << '\n';
-        std::cout << "Rendimiento: " << simulated_steps / elapsed << " pasos/s\n";
+        std::cout << "Rendimiento: " << simulated_steps / elapsed
+                  << " pasos/s\n";
+
+        std::cout << "\n===== PERFILADO CPU =====\n";
+
+        std::cout << "Simulacion: " << time_simulation << " s ("
+                  << 100.0 * time_simulation / elapsed << "%)\n";
+
+        std::cout << "Renderizado: " << time_render << " s ("
+                  << 100.0 * time_render / elapsed << "%)\n";
+
+        std::cout << "Escritura video: " << time_video << " s ("
+                  << 100.0 * time_video / elapsed << "%)\n";
     } catch (const std::exception& e) {
         std::cerr << "Error: " << e.what() << '\n';
         return 1;

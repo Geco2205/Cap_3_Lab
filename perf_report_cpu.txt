@@ -1,0 +1,103 @@
+# To display the perf.data header info, please use --header/--header-only options.
+#
+#
+# Total Lost Samples: 0
+#
+# Samples: 10K of event 'cpu-clock'
+# Event count (approx.): 110242423140
+#
+# Overhead  Command          Shared Object               Symbol                                                                                                                          
+# ........  ...............  ..........................  ................................................................................................................................
+#
+    53.01%  drop_simulation  drop_simulation             [.] main
+            |
+            ---main
+               __libc_start_main
+               _start
+
+    29.36%  drop_simulation  libm-2.27.so                [.] powf@@GLIBC_2.27
+            |
+            ---powf@@GLIBC_2.27
+               __libc_start_main
+               _start
+
+     7.76%  drop_simulation  libavcodec.so.57.107.100    [.] av_jni_get_java_vm
+            |
+            ---av_jni_get_java_vm
+               __libc_start_main
+               _start
+
+     2.60%  drop_simulation  libswscale.so.4.8.100       [.] sws_get_class
+            |
+            ---sws_get_class
+               __libc_start_main
+               _start
+
+     2.30%  drop_simulation  libavcodec.so.57.107.100    [.] avpriv_mpa_decode_header
+            |
+            ---avpriv_mpa_decode_header
+               __libc_start_main
+               _start
+
+     1.57%  drop_simulation  libavcodec.so.57.107.100    [.] av_parser_close
+            |
+            ---av_parser_close
+               __libc_start_main
+               _start
+
+     0.83%  drop_simulation  libavcodec.so.57.107.100    [.] av_mediacodec_release_buffer
+            |
+            ---av_mediacodec_release_buffer
+               __libc_start_main
+               _start
+
+     0.53%  drop_simulation  libavcodec.so.57.107.100    [.] av_picture_pad
+            |
+            ---av_picture_pad
+               __libc_start_main
+               _start
+
+     0.38%  drop_simulation  libc-2.27.so                [.] __memcpy_generic
+     0.32%  drop_simulation  libavcodec.so.57.107.100    [.] avpriv_aac_parse_header
+     0.25%  drop_simulation  drop_simulation             [.] powf@plt
+     0.21%  drop_simulation  libavcodec.so.57.107.100    [.] avpriv_copy_pce_data
+     0.19%  drop_simulation  libc-2.27.so                [.] __GI_memset
+     0.08%  drop_simulation  libopencv_imgproc.so.4.1.1  [.] cv::LineAA
+     0.07%  drop_simulation  libavcodec.so.57.107.100    [.] avpriv_fits_header_parse_line
+     0.05%  drop_simulation  [kernel.kallsyms]           [k] _raw_spin_unlock_irqrestore
+     0.05%  drop_simulation  libopenmpt.so.0.1.1         [.] std::vector<std::vector<bool, std::allocator<bool> >, std::allocator<std::vector<bool, std::allocator<bool> > > >::operator=
+     0.04%  drop_simulation  [kernel.kallsyms]           [k] __softirqentry_text_start
+     0.03%  drop_simulation  ld-2.27.so                  [.] do_lookup_x
+     0.03%  drop_simulation  libavutil.so.55.78.100      [.] av_buffer_unref
+     0.03%  drop_simulation  libm-2.27.so                [.] sinf64
+     0.03%  drop_simulation  libopencv_imgproc.so.4.1.1  [.] cv::putText
+     0.02%  drop_simulation  [kernel.kallsyms]           [k] _raw_spin_unlock_irq
+     0.02%  drop_simulation  libavutil.so.55.78.100      [.] av_buffer_ref
+     0.02%  drop_simulation  libc-2.27.so                [.] __libc_malloc
+     0.02%  drop_simulation  libm-2.27.so                [.] cos
+     0.02%  drop_simulation  libm-2.27.so                [.] expf32
+     0.01%  drop_simulation  [kernel.kallsyms]           [k] __check_object_size
+     0.01%  drop_simulation  [kernel.kallsyms]           [k] __cpu_clear_user_page
+     0.01%  drop_simulation  [kernel.kallsyms]           [k] __delay
+     0.01%  drop_simulation  [kernel.kallsyms]           [k] __lock_text_start
+     0.01%  drop_simulation  [kernel.kallsyms]           [k] clear_page
+     0.01%  drop_simulation  [kernel.kallsyms]           [k] down_read_trylock
+     0.01%  drop_simulation  [kernel.kallsyms]           [k] vma_gap_callbacks_rotate
+     0.01%  drop_simulation  [kernel.kallsyms]           [k] vma_merge
+     0.01%  drop_simulation  [kernel.kallsyms]           [k] vmacache_find
+     0.01%  drop_simulation  [kernel.kallsyms]           [k] zap_pte_range
+     0.01%  drop_simulation  ld-2.27.so                  [.] _dl_map_object
+     0.01%  drop_simulation  libavcodec.so.57.107.100    [.] av_buffer_unref@plt
+     0.01%  drop_simulation  libavcodec.so.57.107.100    [.] av_picture_copy
+     0.01%  drop_simulation  libavcodec.so.57.107.100    [.] avcodec_encode_video2
+     0.01%  drop_simulation  libavutil.so.55.78.100      [.] av_buffer_make_writable
+     0.01%  drop_simulation  libavutil.so.55.78.100      [.] av_frame_ref
+     0.01%  drop_simulation  libc-2.27.so                [.] _int_free
+     0.01%  drop_simulation  libopencv_videoio.so.4.1.1  [.] cv::VideoWriter::write
+     0.01%  drop_simulation  libopencv_videoio.so.4.1.1  [.] cv::_InputArray::step@plt
+     0.01%  drop_simulation  libopenmpt.so.0.1.1         [.] std::vector<float, std::allocator<float> >::_M_realloc_insert<float const&>
+
+
+#
+# (Cannot load tips.txt file, please install perf!)
+#
