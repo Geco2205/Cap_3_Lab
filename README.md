@@ -1,7 +1,5 @@
-# Cap_3_Lab
-Laboratorio del Capítulo 3
 
-# Reporte: Laboratorio 5, Computación Heterogénea y GPU
+# Reporte: Laboratorio Capítulo 3, UNIDADES DE PROCESAMIENTO GRÁFICO
 
 EL5859 Computación Heterogénea, II Semestre 2026.
 Integrantes: Gonzalo Alpízar Salas, Gerson Adrián Cordero Zúñiga, Nicole Irina Corrales Rodríguez, Keilin Loáisiga Téllez
