@@ -12,22 +12,41 @@
 
 namespace {
 
+// Config guarda todos los parámetros de la simulación juntos: tamaño de la malla,
+// duración y fps del video, las constantes de la física (velocidad de la onda y
+// amortiguamientos), el tamaño de la gota y el archivo de salida. En main se crea
+// una sola vez como const y todas las funciones la reciben, así ningún valor
+// queda escrito a mano dentro del código y se puede cambiar el experimento desde
+// un solo lugar. Con los valores por defecto salen 30 s * 30 fps = 900 cuadros, y
+// como steps_per_frame es 1, también 900 pasos de simulación.
 struct Config {
     int width = 640;
     int height = 640;
     double seconds = 30.0;
     int fps = 30;
-    int steps_per_frame = 1;
-    float wave_speed = 0.45f;
-    float damping = 0.006f;
-    float edge_damping = 0.035f;
-    float drop_radius = 18.0f;
-    float drop_strength = 1.0f;
+    int steps_per_frame = 1;       // pasos de simulación por cada cuadro del video
+    float wave_speed = 0.45f;      // velocidad de la onda; en 2D tiene que ser <= 1/sqrt(2) para que sea estable
+    float damping = 0.006f;        // pérdida de energía en todo el estanque
+    float edge_damping = 0.035f;   // amortiguamiento extra que se suma cerca del borde
+    float drop_radius = 18.0f;     // tamaño de la gota (sigma de la gaussiana)
+    float drop_strength = 1.0f;    // altura de la gota en el centro
     std::string output = "output/drop_simulation.mp4";
 };
 
-int index_of(int x, int y, int width) { return y * width + x; }
+// Convierte una posición (x, y) de la malla al índice del vector. La malla se
+// guarda por filas, entonces las celdas de una misma fila quedan seguidas en
+// memoria. Todas las demás funciones la usan para leer y escribir alturas.
+int index_of(int x, int y, int width) {
+    return y * width + x;
+}
 
+// Esta función crea la perturbación inicial, o sea la gota. Es el punto de partida
+// de toda la simulación: sin ella el agua está quieta y nunca pasa nada. La gota
+// es una campana gaussiana centrada en el estanque. Se suma a current (la altura
+// en este instante) y una parte se le resta a previous. Como la velocidad se
+// calcula como current - previous, la gota no empieza quieta sino con velocidad,
+// y eso hace que la onda salga hacia afuera. Se ejecuta una sola vez, antes del
+// ciclo principal, y no toca las celdas del borde de la malla.
 void add_drop(std::vector<float>& current, std::vector<float>& previous,
               const Config& cfg) {
     const float cx = 0.5f * static_cast<float>(cfg.width - 1);
@@ -48,6 +67,14 @@ void add_drop(std::vector<float>& current, std::vector<float>& previous,
     }
 }
 
+// Calcula cuánto amortiguamiento le toca a cada celda según qué tan cerca está
+// del borde. Sirve para que las olas no reboten contra el marco de la imagen: sin
+// esto, al llegar al borde se reflejarían y el video se vería como una piscina
+// pequeña. Lo que hace es una capa absorbente. En el centro devuelve solo el
+// amortiguamiento base, pero en los 32 píxeles más cercanos al borde le suma un
+// término que crece de forma cuadrática hasta edge_damping. Así la onda va
+// perdiendo energía poco a poco antes de llegar al borde. La usa simulate_step
+// en cada celda de cada paso.
 float border_absorption(int x, int y, const Config& cfg) {
     constexpr int band = 32;
     const int dist = std::min({x, y, cfg.width - 1 - x, cfg.height - 1 - y});
@@ -59,6 +86,17 @@ float border_absorption(int x, int y, const Config& cfg) {
     return cfg.damping + cfg.edge_damping * t * t;
 }
 
+// Esta es la función que hace avanzar la simulación un paso de tiempo, o sea
+// donde se actualiza la ecuación de onda. Recibe la malla del paso anterior
+// (previous) y la del paso actual (current), y escribe la del siguiente paso en
+// next. Para cada celda calcula el laplaciano con sus 4 vecinas (la diferencia
+// entre el valor de la celda y el promedio de lo que la rodea), que es lo que
+// jala la altura hacia sus vecinas y hace que la onda se propague. Luego le resta
+// el amortiguamiento multiplicado por la velocidad. Cada celda solo lee valores
+// viejos y escribe en su propia posición de next, así que todas se pueden
+// calcular al mismo tiempo, y por eso la queremos pasar a CUDA con un hilo por
+// celda. El borde queda siempre en 0 porque next se llena de ceros antes y el
+// ciclo no lo toca.
 void simulate_step(const std::vector<float>& previous,
                    const std::vector<float>& current, std::vector<float>& next,
                    const Config& cfg) {
@@ -81,6 +119,15 @@ void simulate_step(const std::vector<float>& previous,
     }
 }
 
+// Convierte la malla de alturas en la imagen de un cuadro del video. La
+// simulación solo produce números, y esta función es la que los vuelve algo que
+// se pueda ver. Para cada píxel mira las alturas de los vecinos para saber qué
+// tan inclinada está la superficie, con eso saca una normal, y con la normal
+// calcula cuánta luz recibe (luz difusa) y un brillo fuerte en las crestas
+// (especular). Después lo combina con la altura del punto para obtener el gris.
+// Al final escribe encima el número de cuadro. Cada píxel se calcula sin
+// depender de los demás, así que también se puede paralelizar. Además hace una
+// normalización y un pow por píxel, entonces probablemente pese bastante.
 cv::Mat render_frame(const std::vector<float>& height, const Config& cfg,
                      int frame_number) {
     cv::Mat image(cfg.height, cfg.width, CV_8UC3);
@@ -125,6 +172,16 @@ cv::Mat render_frame(const std::vector<float>& height, const Config& cfg,
 
 }  // namespace
 
+// Función principal: arma todo y controla el ciclo de simulación. Primero crea
+// la carpeta de salida, reserva las tres mallas que se necesitan (previous,
+// current y next, que son los instantes t-1, t y t+1), pone la gota con add_drop
+// y abre el escritor de video. Después empieza el ciclo principal, que por cada
+// cuadro hace tres cosas: avanza la simulación con simulate_step (y rota los
+// buffers con swap para no copiar datos), dibuja el estado con render_frame y
+// escribe esa imagen en el video. Mientras tanto va imprimiendo el avance cada
+// 10 %. Al terminar calcula las métricas: tiempo, pasos simulados y pasos por
+// segundo. El tiempo incluye la simulación, el render y la escritura del video,
+// pero no incluye la reserva de memoria ni add_drop.
 int main() {
     try {
         const Config cfg;
