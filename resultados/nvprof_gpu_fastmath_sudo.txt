@@ -1,0 +1,34 @@
+==29677== NVPROF is profiling process 29677, command: ./build-gpu-fastmath/drop_simulation_gpu_fastmath
+==29677== Warning: Unified Memory Profiling is not supported on the underlying platform. System requirements for unified memory can be found at: http://docs.nvidia.com/cuda/cuda-c-programming-guide/index.html#um-requirements
+==29677== Profiling application: ./build-gpu-fastmath/drop_simulation_gpu_fastmath
+Frame 0 / 900
+Frame 90 / 900
+Frame 180 / 900
+Frame 270 / 900
+Frame 360 / 900
+Frame 450 / 900
+Frame 540 / 900
+Frame 630 / 900
+Frame 720 / 900
+Frame 810 / 900
+Video generado: output/drop_simulation_gpu_fastmath.mp4
+Tiempo GPU: 30.8362 s
+Pasos simulados: 900
+Rendimiento: 29.1865 pasos/s
+==29677== Profiling result:
+            Type  Time(%)      Time     Calls       Avg       Min       Max  Name
+ GPU activities:   55.13%  5.31749s       900  5.9083ms  5.8875ms  8.5471ms  _GLOBAL__N__44_tmpxft_000073b6_00000000_9_drop_cuda_cpp1_ii_867b23c7::render_frame_kernel(float const *, unsigned char*, int, int, float, float, float)
+                   34.07%  3.28651s       900  3.6517ms  3.6293ms  6.0951ms  _GLOBAL__N__44_tmpxft_000073b6_00000000_9_drop_cuda_cpp1_ii_867b23c7::simulate_step_kernel(float const *, float const *, float*, int, int, float, float, float)
+                   10.77%  1.03913s       900  1.1546ms  1.1532ms  1.1750ms  [CUDA memcpy DtoH]
+                    0.03%  3.0586ms         2  1.5293ms  1.5256ms  1.5330ms  [CUDA memcpy HtoD]
+      API calls:   94.07%  11.2171s       902  12.436ms  915.86us  17.192ms  cudaMemcpy
+                    3.98%  474.07ms         4  118.52ms  1.1737ms  469.53ms  cudaMalloc
+                    1.91%  228.13ms      1800  126.74us  70.002us  254.43us  cudaLaunchKernel
+                    0.03%  3.1325ms      1800  1.7400us  1.2500us  2.3960us  cudaGetLastError
+                    0.01%  932.21us         4  233.05us  182.56us  354.07us  cudaFree
+                    0.00%  468.71us        97  4.8320us  1.0410us  92.920us  cuDeviceGetAttribute
+                    0.00%  15.105us         1  15.105us  15.105us  15.105us  cuDeviceTotalMem
+                    0.00%  8.7500us         3  2.9160us  2.0320us  4.0100us  cuDeviceGetCount
+                    0.00%  4.8440us         2  2.4220us  1.9790us  2.8650us  cuDeviceGet
+                    0.00%  2.7080us         1  2.7080us  2.7080us  2.7080us  cuDeviceGetName
+                    0.00%  1.7710us         1  1.7710us  1.7710us  1.7710us  cuDeviceGetUuid

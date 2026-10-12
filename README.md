@@ -75,8 +75,7 @@ reboten contra el marco. Para que el esquema sea estable en 2D se necesita
 Las 4 corridas dieron 13.367, 13.283, 13.263 y 13.257 s. La primera fue la más lenta,
 posiblemente porque el sistema aún no tenía el programa en caché. El tiempo medido
 por el programa incluye la simulación, el renderizado y la escritura del video, pero
-no la reserva de memoria ni `add_drop`. Por eso **13.29 s** es la referencia para
-calcular los speedups.
+no la reserva de memoria ni `add_drop`. Esta medición se hizo en una PC x86_64. Los speedups de la GPU se calculan contra la CPU de la Jetson Nano (sección 4), porque es el mismo hardware en el que corre la GPU.
 
 ## 2. Diagrama de flujo
    ![Diagrama de flujo del programa base en CPU](docs/diagrama.png)
@@ -869,36 +868,231 @@ queda pendiente para la etapa de validación correspondiente
 al ejercicio E.
 
 ## 7. Estrategia de validación CPU vs GPU
+ 
+### Estrategia
+ 
+Se usaron dos de las estrategias que propone el enunciado, aplicadas sobre los videos que genera cada versión (`output/*.mp4`):
+ 
+1. **Comparación visual** de cuadros equivalentes de la CPU y la GPU.
+2. **Error absoluto medio y máximo**, calculado cuadro a cuadro sobre los 900 cuadros de cada video.
+La validación se hizo sobre los **píxeles del video** (`uint8` en escala de grises, codec `mpeg4`), no sobre la malla de alturas en `float`. Por eso el error incluye también el redondeo a `uint8` del render y la compresión con pérdida del video, además de las diferencias de punto flotante de la simulación.
+ 
+### 1. Comparación visual
+ 
+Se extrajeron los cuadros 0, 300 y 899 de cada video:
+ 
+```bash
+cd output
+ffmpeg -i drop_simulation.mp4     -vf "select=eq(n\,0)+eq(n\,300)+eq(n\,899)" -vsync 0 cpu_%d.png
+ffmpeg -i drop_simulation_gpu.mp4 -vf "select=eq(n\,0)+eq(n\,300)+eq(n\,899)" -vsync 0 gpu_%d.png
+```
+ 
+| Cuadro | CPU | GPU | Qué se observa |
+|---|---|---|---|
+| 0 | ![CPU 0](evidencia/cpu_1.png) | ![GPU 0](evidencia/gpu_1.png) | Misma gota pequeña en el centro, con el mismo brillo |
+| 300 | ![CPU 300](evidencia/cpu_2.png) | ![GPU 300](evidencia/gpu_2.png) | Mismo anillo, mismo radio y mismo brillo especular arriba a la izquierda |
+| 899 | ![CPU 899](evidencia/cpu_3.png) | ![GPU 899](evidencia/gpu_3.png) | Mismas zonas oscuras en los bordes (banda de absorción) |
+ 
+No se aprecian diferencias visibles. La única diferencia es la etiqueta de texto ("CPU float32" frente a "GPU float32"), que es intencional. Que el cuadro 899 coincida también valida que el manejo de bordes del kernel CUDA es equivalente al de la CPU.
+ 
+### 2. Error absoluto medio y máximo
+ 
+`validar.py` lee los dos videos cuadro a cuadro y calcula la diferencia absoluta por píxel (en niveles de gris, de 0 a 255). Ignora las primeras 50 filas, donde cada video lleva una etiqueta de texto distinta.
+ 
+```python
+import sys, cv2, numpy as np
+a, b = cv2.VideoCapture(sys.argv[1]), cv2.VideoCapture(sys.argv[2])
+maes, maximo, n = [], 0, 0
+while True:
+    ok1, fa = a.read(); ok2, fb = b.read()
+    if not (ok1 and ok2): break
+    d = np.abs(fa[50:].astype(int) - fb[50:].astype(int))  # ignora la etiqueta de texto
+    maes.append(d.mean()); maximo = max(maximo, d.max()); n += 1
+print(f"Cuadros: {n} | Error medio: {np.mean(maes):.4f} | Error maximo: {maximo} (niveles de gris, 0-255)")
+```
+ 
+```bash
+python3 validar.py output/drop_simulation.mp4 output/drop_simulation_gpu.mp4
+```
+ 
+### Resultados
+ 
+| Versión GPU vs CPU | Cuadros | Error medio | Error máximo |
+|---|---|---|---|
+| GPU base | 900 | 0.0005 | 8 |
+| Opt. 1: `--use_fast_math` | 900 | 0.0075 | 11 |
+| Opt. 2: bloque 32×8 | 900 | 0.0005 | 8 |
+| Opt. 3: streams y copias asíncronas | 900 | 0.0005 | 8 |
+| Final (las tres) | 900 | 0.0075 | 11 |
 
-> Pendiente (Ejercicio E).
-
+ 
+### Criterio de aceptación
+ 
+Se aceptó una versión cuando el error medio es menor a 0.01 niveles de gris y el error máximo es menor al 5% del rango (12.75 de 255 niveles). Con esos valores, ninguna diferencia es perceptible en el video.
+ 
+### Explicación de las diferencias
+ 
+- **GPU base:** error medio de 0.0005 y máximo de 8 niveles. No se espera igualdad bit a bit entre CPU y GPU: la GPU fusiona la multiplicación y la suma (FMA) y sus funciones matemáticas (`powf`, raíz cuadrada) pueden redondear distinto. Además, el render trunca a `uint8`, por lo que una diferencia mínima en un valor puede cambiar un nivel de gris. Es una explicación plausible, no se verificó píxel por píxel.
+- **Bloque 32×8 y streams:** el error es idéntico al del GPU base. Estas dos técnicas no modifican la aritmética de ninguna celda (solo cambian cómo se reparten los hilos y cuándo se hacen las copias), así que la salida debe ser la misma.
+- **Fast math:** es la única optimización que aumenta el error: el error medio pasa de 0.0005 a 0.0075 y el máximo de 8 a 11 niveles de gris. La causa es la bandera, que sustituye `powf` y `sqrtf` por versiones más rápidas pero menos precisas. Los datos siguen siendo `float32`. Aunque el error medio es 15 veces mayor, se mantiene por debajo del criterio de aceptación y no es visible en el video.
+- **Versión final:** repite el error de fast math (0.0075 y 11), porque es la única de las tres técnicas que modifica la aritmética.
+ 
+### Limitaciones
+ 
+- La validación mide el error de punta a punta sobre los píxeles del video (`uint8`, codec `mpeg4` con pérdida), no sobre la malla de alturas en `float`. Por eso incluye el redondeo del render y la compresión del video, que pueden ocultar o amplificar diferencias pequeñas, y el valor no es una cota exacta del error de la simulación. Comparar la malla en pasos de control daría ese error sin el efecto del render ni del codec.
+- La comparación visual usa 3 cuadros de 900.
+---
+ 
 ## 8. Resultados de cada optimización
+ 
+Todas las mediciones se hicieron en la misma Jetson Nano (`sm_53`, CUDA 10.2), con la configuración original del programa: malla de 640×640 en `float32`, 900 pasos (1 paso por cuadro) y video de 30 s a 30 fps.
+ 
+### Metodología de medición
+ 
+- **Tiempo total y pasos/s:** salida del programa en una corrida normal, sin profiler (`resultados/gpu_*.txt`).
+- **Tiempos de kernels y copias:** `nvprof` con `sudo` (`resultados/nvprof_gpu_*_sudo.txt`). Estos tiempos incluyen la sobrecarga del profiler, por lo que no se usan para el tiempo total.
+- **Error numérico vs CPU:** `validar.py` compara cuadro a cuadro el video de la CPU con el de cada versión GPU (900 cuadros) y reporta el error absoluto medio y máximo en niveles de gris (0 a 255). Se ignoran las primeras 50 filas, donde cada video lleva una etiqueta de texto distinta ("CPU" o "GPU").
+- **Speedup:** sobre el tiempo total, contra la CPU base y contra el GPU base.
+- **Corridas:** una por versión. Solo la CPU (109.75 s y 109.81 s), el GPU base (32.33 s y 32.37 s) y fast math (29.19 s y 29.50 s) tienen dos.
+### Punto de partida
+ 
+| Etapa | CPU base (`resultados/cpu_corregido_1.txt`) | GPU base (`nvprof`) |
+|---|---|---|
+| Simulación | 5.70 s (5.19%) | 3.65 ms por llamada |
+| Renderizado | 85.74 s (78.13%) | 9.40 ms por llamada (66% de la actividad GPU) |
+| Escritura de video | 18.30 s (16.68%) | sigue en CPU |
+| Copia D2H del cuadro | n/a | 1.15 ms por llamada |
+| **Total** | **109.75 s** (8.20 pasos/s) | **32.37 s** (27.81 pasos/s) |
+ 
+En el GPU base, la actividad de la GPU suma ~14 ms por cuadro y la codificación del video en CPU ~20 ms por cuadro (18.30 s / 900). Las dos corren en serie, y la API `cudaMemcpy` síncrona acumula 14.3 s esperando a la GPU.
+ 
+### Resultados
+ 
+| Versión | Técnica | Tiempo total | Pasos/s | Speedup vs CPU | Speedup vs GPU base | Error medio | Error máximo |
+|---|---|---|---|---|---|---|---|
+| CPU base | n/a | 109.75 s | 8.20 | 1.00x | n/a | n/a | n/a |
+| GPU base | n/a | 32.37 s | 27.81 | 3.39x | 1.00x | 0.0005 | 8 |
+| Opt. 1 | `--use_fast_math` | 29.19 s | 30.84 | 3.76x | 1.11x | 0.0075 | 11 |
+| Opt. 2 | Bloque 16×16 → 32×8 | 32.53 s | 27.66 | 3.37x | 0.99x | 0.0005 | 8 |
+| Opt. 3 | Streams y copias asíncronas | 20.79 s | 43.28 | 5.28x | 1.56x | 0.0005 | 8 |
+| Final | Las tres juntas | 20.77 s | 43.34 | 5.28x | 1.56x | 0.0075 | 11 |
+ 
+Las optimizaciones 1, 2 y 3 se midieron por separado, cada una sobre el GPU base. La versión final las combina.
 
-| Versión | Tiempo total | Pasos/s | Speedup | Error máximo |
-|---|---|---|---|---|
-| CPU base (Jetson Nano) | 109.749 s | 8.20055 | 1.00x | No aplica (referencia) |
-| GPU base (Jetson Nano) | 32.333 s | 27.84 | 3.39x | Pendiente (Ejercicio E) |
-| Optimización 1 | | | | |
-| Optimización 2 | | | | |
-| Optimización 3 | | | | |
+El speedup "respecto a la versión GPU anterior" se calcula contra el GPU base, porque las optimizaciones 1, 2 y 3 se midieron por separado sobre él. La versión final contra la Opt. 3 da 1.00x (20.77 s contra 20.79 s).
+ 
+Tiempos por llamada según `nvprof` (ms):
+ 
+| Versión | `render_frame_kernel` | `simulate_step_kernel` | `memcpy` D2H |
+|---|---|---|---|
+| GPU base | 9.40 | 3.65 | 1.15 |
+| Opt. 1 | 5.91 | 3.65 | 1.15 |
+| Opt. 2 | 9.40 | 3.66 | 1.16 |
+| Opt. 3 | 5.21 | 2.02 | 0.63 |
+| Final | 4.76 | 3.66 | 1.14 |
+ 
+---
+ 
+### Optimización 1: `--use_fast_math`
+ 
+El perfilado del GPU base mostró que el render domina la actividad de la GPU (66%, 9.40 ms por llamada contra 3.65 ms de la simulación) y que por cada píxel calcula `powf(diffuse, 24)` y varias normalizaciones con raíz cuadrada. En la CPU, `powf` ya pesaba 29.36% en `perf`. Con esa evidencia se compiló con la bandera `--use_fast_math` de `nvcc`, que sustituye esas funciones por versiones intrínsecas más rápidas, sin modificar el código.
+ 
+El kernel de render bajó de 9.40 a 5.91 ms (−37%), mientras que la simulación y la copia no cambiaron, porque solo suman y multiplican. El tiempo total pasó de 32.37 s a 29.19 s (1.11x). A cambio, el error medio subió de 0.0005 a 0.0075 y el máximo de 8 a 11 niveles de gris, una diferencia que no se aprecia a simple vista. Como la bandera cambia varias funciones a la vez, no se puede atribuir el ahorro a `powf` o a `sqrtf` por separado. El capítulo 3 del libro del curso menciona que esta bandera debe usarse solo después de analizar su efecto sobre el resultado final (sección *Fast Math*), por eso se midió el error contra la CPU, y como el cambio no es visible en el video, se consideró un buen compromiso entre precisión numérica y velocidad.
 
-> Pendiente (Ejercicios D y F). Para cada optimización: qué problema resuelve, qué
-> cambió en el código, qué evidencia de perfilado la justifica, cuánto mejoró o
-> empeoró y qué impacto tuvo en la precisión.
+### Optimización 2: tamaño de bloque 32×8
+ 
+Con bloques de 16×16, cada warp de 32 hilos lee dos tramos de 16 elementos en filas distintas, mientras que con bloques de 32×8 lee una sola fila de 32 elementos contiguos. La idea era que esto favorecería el acceso coalesced a memoria descrito en el capítulo 3 del libro del curso (sección *Acceso coalesced a memoria*), manteniendo los 256 hilos por bloque y los 1600 bloques. Se cambió `block(16, 16)` por `block(32, 8)` y el grid por `((width + 31) / 32, (height + 7) / 8)` en `gpu_step` y `gpu_render`, con el objetivo de mejorar los kernels medidos con `nvprof` en el GPU base, en particular la simulación (3.65 ms).
 
+El cambio no tuvo efecto medible: la simulación pasó de 3.65 a 3.66 ms, el render se mantuvo en 9.40 ms y el tiempo total fue de 32.53 s (0.99x). La diferencia de 0.17 s (0.5%) está dentro de la variación entre corridas observada en otras versiones. El error se mantuvo en 0.0005 y 8, porque la forma del bloque no modifica la aritmética de cada celda. El resultado sugiere que con 16×16 los accesos a memoria ya eran eficientes, porque cada warp leía tramos alineados (cada fila mide 2560 bytes, múltiplo de 128), y que el render está limitado por cómputo (`powf` y raíces) más que por memoria, algo que concuerda con la mejora de ese kernel al usar `--use_fast_math`.
+ 
+### Optimización 3: streams, copias asíncronas y pinned memory
+ 
+En el GPU base, la GPU y la codificación del video en CPU corren en serie: en cada cuadro la GPU simula, renderiza y copia (~14 ms), y justo después la CPU codifica (~20 ms) mientras la GPU espera. La evidencia está en el perfilado de CPU, donde la escritura de video pesa 16.68% (18.30 s), y en el `nvprof` del GPU base, donde la API `cudaMemcpy` síncrona acumula 14.3 s esperando a la GPU. Para solapar ambas etapas se aplicó la técnica de streams y copias asíncronas del capítulo.
+ 
+El cambio consistió en crear un `cudaStream_t` en `GpuState`, donde se lanzan `gpu_step` y el kernel de render, y en reservar dos buffers pinned en el host (`cudaHostAlloc`) con un evento por buffer. La copia síncrona se reemplazó por `gpu_render_async`, que encola el render y un `cudaMemcpyAsync` D2H y registra el evento con `cudaEventRecord`. La función `gpu_wait` espera con `cudaEventSynchronize` y no con `cudaStreamSynchronize`, para no esperar también al cuadro siguiente. En el `main`, cada iteración encola el cuadro `f` en el buffer `f % 2` y luego procesa el `f-1` (espera, `putText` y `writer.write` con un `cv::Mat` sobre el buffer pinned), y al final se procesa el último cuadro.
+ 
+El tiempo total bajó de 32.37 s a 20.79 s (1.56x sobre el GPU base y 5.28x sobre la CPU). `cudaEventSynchronize` suma solo 24 ms en las 900 llamadas, es decir que cuando la CPU pide un cuadro, la GPU ya lo terminó. El error no cambió (0.0005 y 8), porque no se modifica ningún cálculo. En esta versión, además, los kernels medidos con `nvprof` tardaron cerca de 45% menos que en el GPU base sin haber cambiado su código (render 5.21 ms, simulación 2.02 ms, copia 0.63 ms), y el resultado se repitió en una segunda corrida (5.30, 2.06 y 0.64 ms). Estos tiempos no explican la mejora del tiempo total: la versión final, que también usa el solapamiento, tuvo la simulación y la copia en los valores del base (3.66 y 1.14 ms) y el mismo tiempo total (20.77 s), porque el tiempo lo fija la codificación de video en CPU. El patrón del libro solapa transferencias y kernels entre varios streams; aquí se adaptó a un solo stream para solapar el trabajo de la GPU con la codificación de video en CPU.
+ 
+### Versión final (las tres juntas)
+
+Combina fast math, bloque 32×8 y streams con doble buffer. Tiempo 20.77 s (5.28x sobre la CPU, 1.56x sobre el GPU base) y error 0.0075 y 11, el mismo que fast math porque es la única técnica que cambia la aritmética.
+ 
+La versión final no es más rápida que la Opt. 3 sola (20.77 s contra 20.79 s). Con el solapamiento, el tiempo por cuadro lo fija la CPU: 20.77 s / 900 ≈ 23 ms, mientras que la actividad de la GPU suma unos 9.6 ms por cuadro y queda oculta detrás. Mejorar los kernels ya no reduce el tiempo total.
+ 
 ## 9. Capturas de Nsight / nvprof
 
-> Pendiente (Ejercicio F).
+Los tiempos de los kernels y de las copias se midieron con `nvprof` (con `sudo`, porque sin él la Jetson devuelve el error `ERR_NVGPUCTRPERM`). La salida completa de cada versión está en `resultados/nvprof_gpu_<version>_sudo.txt`. Estos tiempos incluyen la sobrecarga del profiler. A continuación se resume la sección *GPU activities* de cada versión (900 llamadas por kernel).
+
+**GPU base** (`resultados/nvprof_gpu_base_sudo.txt`)
+
+| Actividad | % | Tiempo total | Promedio | Mínimo | Máximo |
+|---|---|---|---|---|---|
+| `render_frame_kernel` | 66.17% | 8.463 s | 9.404 ms | 9.388 ms | 9.423 ms |
+| `simulate_step_kernel` | 25.69% | 3.286 s | 3.651 ms | 3.632 ms | 6.196 ms |
+| `memcpy` D2H | 8.12% | 1.039 s | 1.154 ms | 1.152 ms | 1.179 ms |
+
+**Opt. 1: `--use_fast_math`** (`resultados/nvprof_gpu_fastmath_sudo.txt`)
+
+| Actividad | % | Tiempo total | Promedio | Mínimo | Máximo |
+|---|---|---|---|---|---|
+| `render_frame_kernel` | 55.13% | 5.317 s | 5.908 ms | 5.888 ms | 8.547 ms |
+| `simulate_step_kernel` | 34.07% | 3.287 s | 3.652 ms | 3.629 ms | 6.095 ms |
+| `memcpy` D2H | 10.77% | 1.039 s | 1.155 ms | 1.153 ms | 1.175 ms |
+
+**Opt. 2: bloque 32×8** (`resultados/nvprof_gpu_block32x8_sudo.txt`)
+
+| Actividad | % | Tiempo total | Promedio | Mínimo | Máximo |
+|---|---|---|---|---|---|
+| `render_frame_kernel` | 66.10% | 8.458 s | 9.398 ms | 9.387 ms | 9.412 ms |
+| `simulate_step_kernel` | 25.75% | 3.295 s | 3.661 ms | 3.647 ms | 3.676 ms |
+| `memcpy` D2H | 8.13% | 1.040 s | 1.155 ms | 1.153 ms | 1.174 ms |
+
+**Opt. 3: streams y copias asíncronas** (`resultados/nvprof_gpu_streams_sudo.txt`)
+
+| Actividad | % | Tiempo total | Promedio | Mínimo | Máximo |
+|---|---|---|---|---|---|
+| `render_frame_kernel` | 66.20% | 4.685 s | 5.205 ms | 4.716 ms | 9.402 ms |
+| `simulate_step_kernel` | 25.74% | 1.821 s | 2.024 ms | 1.830 ms | 3.649 ms |
+| `memcpy` D2H | 8.02% | 567.3 ms | 0.630 ms | 0.571 ms | 1.143 ms |
+
+Una segunda corrida dio promedios de 5.30, 2.06 y 0.64 ms para los mismos tres rubros.
+
+**Versión final: las tres juntas** (`resultados/nvprof_gpu_all_sudo.txt`)
+
+| Actividad | % | Tiempo total | Promedio | Mínimo | Máximo |
+|---|---|---|---|---|---|
+| `render_frame_kernel` | 49.77% | 4.283 s | 4.759 ms | 4.749 ms | 4.775 ms |
+| `simulate_step_kernel` | 38.26% | 3.292 s | 3.658 ms | 3.646 ms | 3.668 ms |
+| `memcpy` D2H | 11.94% | 1.027 s | 1.142 ms | 1.136 ms | 1.145 ms |
+
+En todas las versiones, la copia H2D son solo 2 llamadas (~3.06 ms en total). También se resumen las llamadas de la API que muestran el efecto de los streams:
+
+| Versión | Llamada de la API | Tiempo | % del tiempo de API |
+|---|---|---|---|
+| GPU base | `cudaMemcpy` (902 llamadas, síncronas) | 14.29 s | 95.34% |
+| Opt. 3 | `cudaEventSynchronize` (900 llamadas) | 24.42 ms | 2.80% |
+| Opt. 3 | `cudaMemcpyAsync` (900 llamadas) | 132.25 ms | 15.15% |
+| Final | `cudaEventSynchronize` (900 llamadas) | 19.66 ms | 2.45% |
+| Final | `cudaMemcpyAsync` (900 llamadas) | 77.31 ms | 9.62% |
 
 ## 10. Análisis de rendimiento
 
-> Pendiente.
+En la CPU, el render consume el 78.13% del tiempo y la codificación del video el 16.68%. Al pasar a la GPU, la parte numérica se acelera mucho: el render baja de unos 95 ms por cuadro (85.74 s / 900) a 9.40 ms, cerca de 10 veces, y la simulación de unos 6.3 ms a 3.65 ms, cerca de 1.7 veces. La escritura del video, en cambio, queda en la CPU y no se acelera. Por eso el GPU base solo alcanza 3.39x, y mientras la codificación (18.30 s) corra en serie con la GPU, el speedup no puede pasar de ~6x (109.75 s / 18.30 s).
+
+Las optimizaciones que solo mejoran los kernels tienen un alcance limitado, porque la actividad de la GPU del GPU base suma unos 12.8 s de los 32.37 s totales. Fast math acelera el render un 37% y ahorra unos 3 s (1.11x). El cambio de bloque no modifica los tiempos de los kernels. En cambio, los streams atacan la espera en serie: el tiempo total baja de 32.37 s a 20.79 s, un ahorro de 11.6 s que es casi toda la actividad de la GPU del GPU base, que pasa a quedar oculta detrás de la codificación de video.
+
+Con el solapamiento, el tiempo por cuadro lo fija la CPU (20.77 s / 900 ≈ 23 ms), mientras que la actividad de la GPU suma unos 9.6 ms por cuadro en la versión final. Por eso la versión final con las tres optimizaciones (20.77 s) no es más rápida que la Opt. 3 sola (20.79 s): mejorar los kernels ya no reduce el tiempo total. El mínimo que queda es la codificación del video en CPU (~20 ms por cuadro). Un siguiente paso para bajar de los ~20 s sería paralelizar esa codificación, por ejemplo con un hilo aparte o con un codificador por hardware.
 
 ## 11. Conclusiones
-
-> Pendiente.
+ 
+1. La mayor mejora vino de atacar el cuello de botella real, la espera en serie entre la GPU y la codificación de video en CPU (streams, 1.56x).
+2. Fast math acelera el kernel de render un 37% y da 1.11x en total, a cambio de un error medio 15 veces mayor, que no se aprecia visualmente.
+3. Cambiar la forma del bloque no tuvo efecto, porque los accesos a memoria ya eran eficientes.
+4. Cuando el cuello de botella pasa de la GPU a la CPU, las mejoras de la GPU dejan de sumar. Por eso conviene medir tanto cada técnica por separado como todas juntas.
 
 ## 12. Instrucciones de compilación y ejecución
+
+### Versión CPU
 
 ```bash
 meson setup build --buildtype=release
@@ -921,7 +1115,38 @@ ffprobe -v error -select_streams v:0 \
   -of default=nw=1 output/drop_simulation.mp4
 ```
 
+### Cómo correr cada versión
+
+Desde `drop-simulation/`, en la Jetson. Cada versión compila con:
+ 
+```bash
+mkdir -p build-gpu-<nombre>
+nvcc -O3 -std=c++14 -arch=sm_53 [--use_fast_math] -I src $(pkg-config --cflags opencv4) \
+  src/<main>.cpp src/<cuda>.cu -o build-gpu-<nombre>/<binario> $(pkg-config --libs opencv4) -lstdc++fs
+./build-gpu-<nombre>/<binario> 2>&1 | tee <salida>.txt
+sudo /usr/local/cuda/bin/nvprof ./build-gpu-<nombre>/<binario> 2>&1 | tee nvprof_<salida>_sudo.txt
+```
+ 
+| Versión | `<main>` | `<cuda>` | `--use_fast_math` | Video de salida |
+|---|---|---|---|---|
+| GPU base | `main_gpu` | `drop_cuda` | no | `drop_simulation_gpu.mp4` |
+| Opt. 1 | `main_gpu_fastmath` | `drop_cuda` | sí | `drop_simulation_gpu_fastmath.mp4` |
+| Opt. 2 | `main_gpu_block32x8` | `drop_cuda_block32x8` | no | `drop_simulation_gpu_block32x8.mp4` |
+| Opt. 3 | `main_gpu_streams` | `drop_cuda_streams` | no | `drop_simulation_gpu_streams.mp4` |
+| Final | `main_gpu_all` | `drop_cuda_all` | sí | `drop_simulation_gpu_all.mp4` |
+ 
+`src/drop_cuda.hpp` es compartido por todas las versiones (las funciones de streams solo se agregaron como declaraciones). Cada versión escribe su propio video para no pisar los demás.
+ 
+Para el error numérico, en una PC con OpenCV para Python:
+ 
+```bash
+python3 validar.py output/drop_simulation.mp4 output/drop_simulation_gpu_<version>.mp4
+```
+
 Requisitos: g++, Meson, Ninja y OpenCV 4 (`libopencv-dev`).
+
+
+
 
 ## 13. Declaración de uso de IA
 Nota sobre utilización de herramientas de IA
@@ -935,3 +1160,5 @@ Nicole: no utilizó herramientas de chat de IA para su parte del laboratorio, po
 Keilin: https://chatgpt.com/share/6acc505a-5550-83e8-b2a8-9299a5f77d91 
 
 Gonzalo: https://chatgpt.com/share/6acc575e-fbe8-83e8-a49e-90cbff67e063 
+
+Gerson: https://claude.ai/share/1d45b8b9-2f23-4fb8-95a5-af81f2c019f9

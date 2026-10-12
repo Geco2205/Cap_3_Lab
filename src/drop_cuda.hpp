@@ -22,5 +22,21 @@ void gpu_render(
     unsigned char* host_bgr
 );
 
+// Reservar buffer host pinned para un fotograma BGR
+unsigned char* gpu_alloc_pinned(int width, int height);
+
+// Liberar buffer host pinned
+void gpu_free_pinned(unsigned char* ptr) noexcept;
+
+// Encolar render + copia D2H asincrona en el stream; registra el evento del slot
+void gpu_render_async(
+    GpuState* state,
+    unsigned char* host_pinned,
+    int slot
+);
+
+// Esperar a que termine el fotograma del slot
+void gpu_wait(GpuState* state, int slot);
+
 // Liberar los recursos de GPU
 void gpu_destroy(GpuState* state) noexcept;
