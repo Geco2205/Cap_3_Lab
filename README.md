@@ -172,3 +172,12 @@ Requisitos: g++, Meson, Ninja y OpenCV 4 (`libopencv-dev`).
 ## 13. Declaración de uso de IA
 
 
+Nota sobre utilización de herramientas de IA
+
+Se hace uso de herramientas de IA como apoyo para comprender conceptos, generar ideas y mejorar la redacción de la documentación. La implementación, la validación y los resultados son responsabilidad del estudiante, quien asume la responsabilidad por el uso indebido o no descrito anteriormente.
+
+Se adjuntan los enlaces compartidos de las conversaciones como evidencia:
+
+Nicole: no utilizó herramientas de chat de IA para su parte del laboratorio, por lo que no hay conversación que adjuntar, debido a que le tocó correr código y documentarlo. 
+
+Keilin: https://chatgpt.com/share/6acc505a-5550-83e8-b2a8-9299a5f77d91
